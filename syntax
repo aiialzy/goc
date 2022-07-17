@@ -1,0 +1,9 @@
+expr = term {[ADD | SUB] term}*
+term = factor [{[MUL | DIV | MOD] integer_factor}* | {[MUL | DIV] float_factor}*]
+integer_factor = [ADD | SUB] integer_factor | ["0x" | "0b" | "0" | "0o"] integer | LPAREN expr RPAREN
+float_factor = [ADD | SUB] float_factor | float | LPAREN expr RPAREN
+
+digit_excluding_zero = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+digit = "0" | digit_excluding_zero
+integer = digit_excluding_zero {digit}*
+float = integer "." {digit}*
