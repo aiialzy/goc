@@ -1,24 +1,30 @@
 package lexer
 
 import (
-	"bufio"
 	"fmt"
 	"goc/token"
 	"io"
-	"os"
 	"strings"
 	"unicode"
 )
 
-func New(ioreader io.Reader) *Lexer {
-	reader := bufio.NewReader(ioreader)
+const MAX_TEMP_RUNES_SIZE = 8
+
+var RESERVED_KEYWORDS = map[string]*token.Token{
+	"var": {Type: token.TOKEN_TYPE_VAR, Value: "var"},
+}
+
+func New(source string) *Lexer {
 	return &Lexer{
-		reader: reader,
+		reader: &runeReader{
+			runes: []rune(source),
+			index: 0,
+		},
 	}
 }
 
 type Lexer struct {
-	reader *bufio.Reader
+	reader *runeReader
 }
 
 func (l *Lexer) nextChar() (ch rune, err error) {
@@ -26,23 +32,15 @@ func (l *Lexer) nextChar() (ch rune, err error) {
 	return
 }
 
-func (l *Lexer) peek() (ch rune, err error) {
-	ch, _, err = l.reader.ReadRune()
-	if err != nil {
-		return
-	}
-
-	err = l.reader.UnreadRune()
-	if err != nil {
-		ch = 0
-	}
-	return
+func (l *Lexer) peek(t int) (ch rune, err error) {
+	return l.reader.PeekRune(t)
 }
 
-type checkFunc func(rune) bool
+type checkFunc func(int, rune) bool
 
 func (l *Lexer) read(check checkFunc) (string, error) {
 	var builder strings.Builder
+	index := 0
 	for {
 		ch, err := l.nextChar()
 		if err == io.EOF {
@@ -51,8 +49,9 @@ func (l *Lexer) read(check checkFunc) (string, error) {
 			return builder.String(), err
 		}
 
-		if check(ch) {
+		if check(index, ch) {
 			builder.WriteRune(ch)
+			index++
 		} else {
 			l.reader.UnreadRune()
 			return builder.String(), nil
@@ -62,20 +61,49 @@ func (l *Lexer) read(check checkFunc) (string, error) {
 
 func (l *Lexer) readNumber() (string, error) {
 	return l.read(
-		func(r rune) bool {
+		func(i int, r rune) bool {
 			return unicode.IsDigit(r) || r == '.' || r == 'x' || r == 'b' || r == 'o'
 		},
 	)
 }
 
+func (l *Lexer) readWord() (string, error) {
+	return l.read(func(i int, r rune) bool {
+		return unicode.IsLetter(r) || r == '_' || r > 127 || unicode.IsNumber(r)
+	})
+}
+
 func (l *Lexer) readSpace() (string, error) {
-	return l.read(unicode.IsSpace)
+	return l.read(func(i int, r rune) bool {
+		return unicode.IsSpace(r)
+	})
+}
+
+func (l *Lexer) readCommentLine() (string, error) {
+	return l.read(func(i int, r rune) bool {
+		return r != '\n' && r != '\r'
+	})
+}
+
+func (l *Lexer) readCommentLines() (string, error) {
+	var last rune
+	var stop bool
+	return l.read(func(i int, r rune) bool {
+		if stop {
+			return false
+		}
+
+		if last == '*' && r == '/' {
+			stop = true
+		}
+		last = r
+		return true
+	})
 }
 
 func (l *Lexer) readOp(op string) string {
-	i := 0
 	rs := []rune(op)
-	op, _ = l.read(func(r rune) bool {
+	op, _ = l.read(func(i int, r rune) bool {
 		if i < len(op) && rs[i] == r {
 			i++
 			return true
@@ -88,21 +116,38 @@ func (l *Lexer) readOp(op string) string {
 
 func (l *Lexer) NextToken() *token.Token {
 	for {
-		ch, err := l.peek()
+		ch, err := l.peek(0)
 		if err == io.EOF {
 			return token.New(token.TOKEN_TYPE_EOF, "EOF")
 		} else if err != nil {
-			fmt.Printf("read next token failed: %v\n", err)
-			os.Exit(1)
+			panic(fmt.Sprintf("read next token failed: %v\n", err))
 		}
 
 		if unicode.IsSpace(ch) {
 			_, err := l.readSpace()
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				panic(fmt.Sprintf("read space failed: %v\n", err))
 			}
 			continue
+		}
+
+		if ch == '/' {
+			ch, err := l.peek(1)
+			if err != nil && err != io.EOF {
+				panic(fmt.Sprintf("peek failed: %v\n", err))
+			} else if ch == '/' {
+				_, err := l.readCommentLine()
+				if err != nil && err != io.EOF {
+					panic(fmt.Sprintf("read comment line failed: %v\n", err))
+				}
+				continue
+			} else if ch == '*' {
+				_, err := l.readCommentLines()
+				if err != nil && err != io.EOF {
+					panic(fmt.Sprintf("read comment lines failed: %v\n", err))
+				}
+				continue
+			}
 		}
 
 		if unicode.IsNumber(ch) {
@@ -116,6 +161,17 @@ func (l *Lexer) NextToken() *token.Token {
 			return token.New(token.TOKEN_TYPE_INTEGER, numStr)
 		}
 
+		if unicode.IsLetter(ch) || ch == '_' || ch > 127 {
+			word, err := l.readWord()
+			if err != nil {
+				fmt.Printf("read word failed: %v\n", err)
+			}
+			if t, exists := RESERVED_KEYWORDS[word]; exists {
+				return t
+			}
+			return token.New(token.TOKEN_TYPE_ID, word)
+		}
+
 		switch ch {
 		case '+':
 			return token.New(token.TOKEN_TYPE_OP_ADD, l.readOp("+"))
@@ -124,16 +180,24 @@ func (l *Lexer) NextToken() *token.Token {
 		case '*':
 			return token.New(token.TOKEN_TYPE_OP_MUL, l.readOp("*"))
 		case '/':
-			return token.New(token.TOKEN_TYPE_OP_DIV, l.readOp("/"))
+			return token.New(token.TOKEN_TYPE_OP_MUL, l.readOp("/"))
 		case '%':
 			return token.New(token.TOKEN_TYPE_OP_MOD, l.readOp("%"))
 		case '(':
 			return token.New(token.TOKEN_TYPE_LPAREN, l.readOp("("))
 		case ')':
 			return token.New(token.TOKEN_TYPE_RPAREN, l.readOp(")"))
+		case '{':
+			return token.New(token.TOKEN_TYPE_LBRACE, l.readOp("{"))
+		case '}':
+			return token.New(token.TOKEN_TYPE_RBRACE, l.readOp("}"))
+		case ';':
+			return token.New(token.TOKEN_TYPE_SEMI, l.readOp(";"))
+		case '=':
+			return token.New(token.TOKEN_TYPE_ASSIGN, l.readOp("="))
 		}
 
-		panic(fmt.Sprintf("unrecognize character: %c", ch))
+		panic(fmt.Sprintf("unexpected character: %c", ch))
 	}
 
 }

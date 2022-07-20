@@ -17,15 +17,32 @@ func main() {
 
 	token.SetPrintToken(IS_PRINT_TOKEN)
 
-	fd, err := os.Open("code.goc")
+	source, err := os.ReadFile("code.goc")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	aLexer := lexer.New(fd)
+	aLexer := lexer.New(string(source))
+	// printAllToken(aLexer)
+
+	interpret(aLexer)
+}
+
+func interpret(aLexer *lexer.Lexer) {
 	aParser := parser.New(aLexer)
 	ir := interpreter.New(aParser)
-	result, valueType := ir.Interpret()
-	fmt.Println(result, valueType)
+	ir.Interpret()
+	ir.PrintValues()
+}
+
+func printAllToken(aLexer *lexer.Lexer) {
+	for {
+		t := aLexer.NextToken()
+		if t.Type == token.TOKEN_TYPE_EOF {
+			break
+		}
+
+		fmt.Println(t)
+	}
 }

@@ -1,9 +1,56 @@
-expr = term {[ADD | SUB] term}*
-term = factor [{[MUL | DIV | MOD] integer_factor}* | {[MUL | DIV] float_factor}*]
-integer_factor = [ADD | SUB] integer_factor | ["0x" | "0b" | "0" | "0o"] integer | LPAREN expr RPAREN
-float_factor = [ADD | SUB] float_factor | float | LPAREN expr RPAREN
-
 digit_excluding_zero = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
-digit = "0" | digit_excluding_zero
+
+digit = "0" 
+    | digit_excluding_zero
+
 integer = digit_excluding_zero {digit}*
-float = integer "." {digit}*
+
+float = integer DOT {digit}*
+
+expr = term {[ADD | SUB] term}*
+
+term = (integer_factor | float_factor | variable) [{[MUL | DIV | MOD] integer_factor}* | {[MUL | DIV] float_factor}* | {[MUL | DIV | MOD] variable}*]
+
+integer_factor = [ADD | SUB] integer_factor 
+    | ["0x" | "0b" | "0" | "0o"] integer 
+    | LPAREN expr RPAREN 
+    | variable
+
+float_factor = [ADD | SUB] float_factor 
+    | float 
+    | LPAREN expr RPAREN
+    | variable
+
+unicode_excluding_ascii = 
+ascii =
+
+unicode = unicode_excluding_ascii 
+    | ascii
+
+lower_case = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z"
+
+upper_case = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+
+alpha = lower_case 
+    | upper_case
+    
+variable = (UNDERLINE | alpha | unicode_excluding_ascii) {UNDERLINE | alpha | unicode_excluding_ascii | digit}*
+
+empty = 
+
+type = integer | float
+
+assignment_statement = "var" variable [type] [ASSIGN expr] DEMI
+no_var_assignment_statement = variable [type] [ASSIGN expr] DEMI
+multi_declaration_statement = "var" LPAREN { no_assignment_statement}* RPAREN
+
+statement = assignment_statement
+    | compound_statement
+    | empty
+    | DEMI
+
+statement_list = {statement}*
+    
+compound_statement = LBRACE statement_list RBRACE
+
+program = compound_statement
